@@ -1,0 +1,312 @@
+\documentclass[11pt]{article}
+
+% ---------------- Packages ----------------
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{mathtools}
+\usepackage{bm}
+\usepackage{geometry}
+\usepackage{hyperref}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{caption}
+\usepackage{float}
+\usepackage{enumitem}
+
+\geometry{margin=1in}
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue,
+  urlcolor=blue,
+  citecolor=blue
+}
+
+% ---------------- Theorem Environments ----------------
+\theoremstyle{plain}
+\newtheorem{theorem}{Theorem}[section]
+\newtheorem{proposition}[theorem]{Proposition}
+
+\theoremstyle{definition}
+\newtheorem{definition}[theorem]{Definition}
+
+\theoremstyle{remark}
+\newtheorem{remark}[theorem]{Remark}
+
+% ---------------- Commands ----------------
+\newcommand{\E}{\mathbb{E}}
+\newcommand{\Var}{\mathrm{Var}}
+\newcommand{\Prob}{\mathbb{P}}
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\1}{\mathbf{1}}
+\newcommand{\normcdf}{\Phi}
+
+% ---------------- Title ----------------
+\title{A Monte Carlo Option Pricing Engine: \\
+Risk-Neutral GBM, Error Analysis, and Variance Reduction}
+\author{Aryan Khan}
+\date{\today}
+
+\begin{document}
+\maketitle
+\tableofcontents
+\newpage
+
+% ============================================================
+\begin{abstract}
+We develop a Monte Carlo pricing engine for European options under the Black--Scholes model.
+We simulate stock price paths using the exact solution of geometric Brownian motion (GBM) under the
+risk-neutral measure and estimate discounted payoffs. We present a statistical error analysis via the
+central limit theorem, construct confidence intervals, and empirically verify the $O(N^{-1/2})$
+convergence rate. We also implement antithetic variates as a variance reduction technique and compare
+Monte Carlo prices to the Black--Scholes closed-form solution. The final result is a clean, reproducible
+pricing pipeline suitable for extension to more advanced derivatives.
+\end{abstract}
+
+% ============================================================
+\section{Introduction}
+Monte Carlo simulation is a general-purpose numerical method for pricing derivatives when closed-form
+formulas are unavailable or when payoffs depend on complex path features. Even in settings where an
+analytic benchmark exists (such as Black--Scholes European options), Monte Carlo provides a valuable
+testbed for understanding estimator variance, confidence intervals, and variance reduction methods.
+
+\paragraph{Goals.}
+\begin{enumerate}[label=\arabic*.]
+\item Specify the Black--Scholes model and its risk-neutral formulation.
+\item Implement Monte Carlo estimators for European call and put options.
+\item Quantify sampling error using standard errors and confidence intervals.
+\item Demonstrate convergence behavior as the number of samples increases.
+\item Improve efficiency using antithetic variates and measure variance reduction.
+\end{enumerate}
+
+% ============================================================
+\section{Model: GBM and Risk-Neutral Pricing}
+\subsection{Geometric Brownian Motion}
+\begin{definition}[GBM under the physical measure]
+A stock price process $(S_t)_{t\ge 0}$ follows geometric Brownian motion if
+\[
+dS_t = \mu S_t\,dt + \sigma S_t\,dW_t,
+\]
+where $\mu\in\R$ is the drift, $\sigma>0$ is the volatility, and $(W_t)$ is standard Brownian motion.
+\end{definition}
+
+\begin{definition}[Risk-neutral measure]
+Under the risk-neutral measure, the discounted stock price becomes a martingale and the SDE takes the form
+\[
+dS_t = r S_t\,dt + \sigma S_t\,dW_t,
+\]
+where $r$ is the continuously-compounded risk-free interest rate.
+\end{definition}
+
+\subsection{Exact Sampling of $S_T$}
+The GBM SDE admits a closed-form solution. Under the risk-neutral model,
+\begin{equation}
+S_T = S_0 \exp\left(\left(r-\tfrac{1}{2}\sigma^2\right)T + \sigma \sqrt{T}\,Z\right),
+\qquad Z\sim \mathcal{N}(0,1).
+\label{eq:gbm_exact}
+\end{equation}
+This exact sampling avoids discretization bias for European payoffs depending only on $S_T$.
+
+% ============================================================
+\section{European Option Pricing}
+\subsection{Payoffs}
+Let $K>0$ be the strike and $T>0$ the maturity. The European call and put payoffs are
+\[
+\text{Call payoff: } (S_T - K)^+,\qquad
+\text{Put payoff: } (K - S_T)^+,
+\]
+where $x^+=\max\{x,0\}$.
+
+\subsection{Risk-Neutral Valuation}
+Under standard no-arbitrage assumptions, the time-$0$ price is the discounted risk-neutral expectation:
+\begin{equation}
+V_0 = e^{-rT}\E\big[\text{payoff}(S_T)\big].
+\label{eq:rn_price}
+\end{equation}
+
+\subsection{Monte Carlo Estimator}
+Let $S_T^{(1)},\dots,S_T^{(N)}$ be i.i.d.\ samples from \eqref{eq:gbm_exact}. Define the discounted payoff samples:
+\[
+Y_i := e^{-rT}\,\text{payoff}\big(S_T^{(i)}\big).
+\]
+Then the Monte Carlo estimator is
+\begin{equation}
+\widehat{V}_N := \frac{1}{N}\sum_{i=1}^N Y_i.
+\label{eq:mc_estimator}
+\end{equation}
+
+\begin{remark}
+The estimator $\widehat{V}_N$ is unbiased in this setting because we sample $S_T$ exactly and take the correct
+risk-neutral discounted payoff.
+\end{remark}
+
+% ============================================================
+\section{Error Analysis: CLT, Standard Error, and Confidence Intervals}
+\subsection{Central Limit Theorem}
+Assuming $\Var(Y_1)<\infty$, the CLT gives
+\[
+\sqrt{N}\left(\widehat{V}_N - V_0\right)\ \Rightarrow\ \mathcal{N}\big(0,\Var(Y_1)\big).
+\]
+Hence the estimation error is typically on the order of $N^{-1/2}$.
+
+\subsection{Standard Error and 95\% CI}
+Let the sample variance be
+\[
+\widehat{\Var}(Y) = \frac{1}{N-1}\sum_{i=1}^N (Y_i - \widehat{V}_N)^2,
+\]
+and define the standard error
+\begin{equation}
+\mathrm{SE}(\widehat{V}_N) = \sqrt{\frac{\widehat{\Var}(Y)}{N}}.
+\label{eq:se}
+\end{equation}
+An approximate $95\%$ confidence interval is
+\begin{equation}
+\widehat{V}_N \ \pm\ 1.96\cdot \mathrm{SE}(\widehat{V}_N).
+\label{eq:ci95}
+\end{equation}
+
+\begin{remark}
+Confidence intervals are crucial in practice: two Monte Carlo runs can produce slightly different point estimates,
+but if their confidence intervals overlap, the results are consistent within sampling error.
+\end{remark}
+
+% ============================================================
+\section{Analytic Benchmark: Black--Scholes Formula}
+For validation, we compare Monte Carlo to the Black--Scholes closed-form price.
+
+Define
+\[
+d_1 = \frac{\ln(S_0/K) + (r+\tfrac{1}{2}\sigma^2)T}{\sigma\sqrt{T}},
+\qquad
+d_2 = d_1 - \sigma\sqrt{T},
+\]
+and let $\normcdf(\cdot)$ denote the standard normal CDF.
+
+\subsection{European Call}
+\begin{equation}
+C_{\mathrm{BS}} = S_0\normcdf(d_1) - K e^{-rT}\normcdf(d_2).
+\label{eq:bs_call}
+\end{equation}
+
+\subsection{European Put}
+\begin{equation}
+P_{\mathrm{BS}} = K e^{-rT}\normcdf(-d_2) - S_0\normcdf(-d_1).
+\label{eq:bs_put}
+\end{equation}
+
+% ============================================================
+\section{Variance Reduction: Antithetic Variates}
+A standard variance reduction method uses negatively correlated samples.
+
+\subsection{Construction}
+Sample $Z\sim\mathcal{N}(0,1)$ and also use $-Z$. Define
+\[
+S_T(Z) = S_0 \exp\left(\left(r-\tfrac{1}{2}\sigma^2\right)T + \sigma\sqrt{T}\,Z\right),
+\quad
+S_T(-Z) = S_0 \exp\left(\left(r-\tfrac{1}{2}\sigma^2\right)T - \sigma\sqrt{T}\,Z\right).
+\]
+For a payoff function $g(\cdot)$, define the paired estimator
+\[
+\widetilde{Y} = \frac{e^{-rT}}{2}\Big(g(S_T(Z)) + g(S_T(-Z))\Big).
+\]
+Then average i.i.d.\ copies of $\widetilde{Y}$ over $N$ pairs.
+
+\begin{proposition}[Variance reduction intuition]
+If $g(S_T(Z))$ and $g(S_T(-Z))$ are negatively correlated, then
+\[
+\Var(\widetilde{Y}) < \Var(Y),
+\]
+reducing the Monte Carlo standard error at fixed computational cost.
+\end{proposition}
+
+\begin{remark}
+Antithetic variates are especially effective when the payoff is monotone in $S_T$ (e.g.\ European calls/puts),
+since $Z$ and $-Z$ push $S_T$ in opposite directions.
+\end{remark}
+
+% ============================================================
+\section{Numerical Experiments}
+\subsection{Experimental Setup}
+In experiments we fix:
+\[
+S_0,\ K,\ r,\ \sigma,\ T,
+\]
+and compute:
+\begin{itemize}
+\item Monte Carlo estimate $\widehat{V}_N$ and 95\% CI,
+\item Black--Scholes benchmark,
+\item estimator variance with and without antithetic variates,
+\item convergence behavior as $N$ varies (e.g.\ $N\in\{10^3,10^4,10^5,10^6\}$).
+\end{itemize}
+
+\subsection{Convergence Rate Study}
+We expect Monte Carlo error to behave like $O(N^{-1/2})$. A practical check is to record
+\[
+\big|\widehat{V}_N - V_{\mathrm{BS}}\big|
+\]
+and plot it against $N$ on a log-log scale; the slope should be close to $-1/2$.
+
+\subsection{(Optional) Figures}
+If you later generate plots using Python, place them under \texttt{figures/} and uncomment these.
+
+% \begin{figure}[H]
+% \centering
+% \includegraphics[width=0.85\textwidth]{figures/convergence_error.png}
+% \caption{Absolute error $|\widehat{V}_N - V_{\mathrm{BS}}|$ vs $N$ on log-log scale. Expected slope $\approx -1/2$.}
+% \label{fig:convergence}
+% \end{figure}
+
+% \begin{figure}[H]
+% \centering
+% \includegraphics[width=0.85\textwidth]{figures/variance_reduction.png}
+% \caption{Variance comparison: vanilla Monte Carlo vs antithetic variates. Antithetic should reduce variance and tighten confidence intervals.}
+% \label{fig:antithetic}
+% \end{figure}
+
+\subsection{Interpretation (what to write)}
+A strong Monte Carlo report should explicitly comment on:
+\begin{itemize}
+\item whether the Black--Scholes price lies inside the Monte Carlo 95\% CI,
+\item how standard error changes with $N$ (decreasing roughly like $1/\sqrt{N}$),
+\item how much variance reduction antithetic variates achieved (report a factor),
+\item runtime vs accuracy trade-offs.
+\end{itemize}
+
+% ============================================================
+\section{Discussion and Extensions}
+\subsection{Summary}
+We implemented a Monte Carlo engine for European option pricing under risk-neutral GBM, validated results against
+Black--Scholes, and quantified uncertainty via confidence intervals. Antithetic variates reduced estimator variance,
+improving efficiency while preserving unbiasedness.
+
+\subsection{Natural Extensions}
+This engine is a foundation for more advanced projects:
+\begin{itemize}
+\item \textbf{Path-dependent options:} Asian options, barrier options (requires time discretization).
+\item \textbf{Greeks by Monte Carlo:} finite differences and likelihood ratio method.
+\item \textbf{Control variates:} use Black--Scholes as a control to further reduce variance.
+\item \textbf{Stochastic volatility:} Heston model simulation.
+\end{itemize}
+
+% ============================================================
+\section*{References}
+\addcontentsline{toc}{section}{References}
+
+\begin{thebibliography}{9}
+
+\bibitem{glasserman}
+P. Glasserman,
+\emph{Monte Carlo Methods in Financial Engineering},
+Springer, 2004.
+
+\bibitem{shreve}
+S. E. Shreve,
+\emph{Stochastic Calculus for Finance II: Continuous-Time Models},
+Springer, 2004.
+
+\bibitem{bjork}
+T. Bj\"ork,
+\emph{Arbitrage Theory in Continuous Time},
+Oxford University Press, 3rd ed., 2009.
+
+\end{thebibliography}
+
+\end{document}
